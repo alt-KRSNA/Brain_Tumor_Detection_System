@@ -1,5 +1,6 @@
 # Virtual environment
 venv/
+.venv/
 
 # Dataset
 dataset/
@@ -25,3 +26,12 @@ __pycache__/
 
 # Streamlit cache
 .streamlit/cache/
+
+# Medical knowledge base PDFs (download separately)
+knowledge_base/medical_documents/*.pdf
+
+# Generated ChromaDB vector database
+vectorstore/*
+
+# Keep the vectorstore directory in Git
+!vectorstore/.gitkeep

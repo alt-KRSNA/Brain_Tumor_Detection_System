@@ -13,3 +13,9 @@ python-multipart==0.0.6
 streamlit==1.28.1
 plotly==5.18.0
 pillow==10.1.0
+groq
+python-dotenv
+pypdf
+langchain-text-splitters
+sentence-transformers
+chromadb
