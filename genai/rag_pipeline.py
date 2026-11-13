@@ -41,25 +41,60 @@ def build_context(retrieved_chunks):
 
         context_parts.append(
             f"""
-            [Source {index}]
-            Filename: {source}
-            Page: {page}
+[Source {index}]
+Filename: {source}
+Page: {page}
 
-            Content:
-            {chunk["text"]}
-            """
+Content:
+{chunk["text"]}
+"""
         )
 
     return "\n\n".join(context_parts)
+
+
+def extract_sources(retrieved_chunks):
+    """
+    Extract unique source filenames and page numbers
+    from retrieved chunks.
+    """
+
+    sources = []
+    seen_sources = set()
+
+    for chunk in retrieved_chunks:
+
+        metadata = chunk["metadata"]
+
+        source = metadata["source"]
+        page = metadata["page"]
+
+        source_key = (source, page)
+
+        if source_key not in seen_sources:
+
+            seen_sources.add(source_key)
+
+            sources.append({
+                "filename": source,
+                "page": page
+            })
+
+    return sources
 
 
 def ask_medical_question(question: str, top_k: int = 3):
     """
     Retrieve medical evidence and generate an answer
     using Groq.
+
+    Returns:
+        dict: Contains generated answer and source references.
     """
 
+    # Validate question
     if not question or not question.strip():
+
         raise ValueError("Question cannot be empty.")
 
     # Step 1: Retrieve relevant medical information
@@ -68,31 +103,42 @@ def ask_medical_question(question: str, top_k: int = 3):
         top_k=top_k
     )
 
+    # Step 2: Handle empty retrieval
     if not retrieved_chunks:
-        return (
-            "I could not find relevant information in "
-            "the medical knowledge base."
-        )
 
-    # Step 2: Build context
+        return {
+            "answer": (
+                "I could not find relevant information in "
+                "the medical knowledge base."
+            ),
+            "sources": []
+        }
+
+    # Step 3: Build context
     context = build_context(retrieved_chunks)
 
-    # Step 3: Create the prompt
+    # Step 4: Extract source references
+    sources = extract_sources(retrieved_chunks)
+
+    # Step 5: Create user prompt
     user_prompt = f"""
-    Answer the following question using the medical
-    context provided below.
+Answer the following question using the medical
+context provided below.
 
-    USER QUESTION:
-    {question}
+USER QUESTION:
+{question}
 
-    RETRIEVED MEDICAL CONTEXT:
-    {context}
+RETRIEVED MEDICAL CONTEXT:
+{context}
 
-    Provide a clear, structured and educational answer.
-    Include source filenames and page numbers.
-    """
+Provide a clear, structured and educational answer.
 
-    # Step 4: Generate answer using Groq
+Include source filenames and page numbers.
+Do not introduce medical facts that are absent
+from the supplied context.
+"""
+
+    # Step 6: Generate answer using Groq
     answer = generate_response(
         user_prompt=user_prompt,
         system_prompt=RAG_SYSTEM_PROMPT,
@@ -100,7 +146,11 @@ def ask_medical_question(question: str, top_k: int = 3):
         max_tokens=1024
     )
 
-    return answer
+    # Step 7: Return structured response
+    return {
+        "answer": answer,
+        "sources": sources
+    }
 
 
 if __name__ == "__main__":
@@ -116,13 +166,24 @@ if __name__ == "__main__":
 
     try:
 
-        answer = ask_medical_question(question)
+        result = ask_medical_question(question)
 
         print("-" * 60)
         print("AI GENERATED ANSWER")
         print("-" * 60)
 
-        print(answer)
+        print(result["answer"])
+
+        print("\n" + "-" * 60)
+        print("SOURCE REFERENCES")
+        print("-" * 60)
+
+        for source in result["sources"]:
+
+            print(
+                f"Source: {source['filename']} "
+                f"| Page: {source['page']}"
+            )
 
     except Exception as error:
 

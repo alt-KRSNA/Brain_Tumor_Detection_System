@@ -32,6 +32,37 @@ def get_vector_collection():
     return collection
 
 
+def reset_vector_collection():
+    """
+    Delete the existing collection and create a fresh one.
+    This prevents outdated chunks from remaining in the database.
+    """
+
+    client = chromadb.PersistentClient(
+        path=str(VECTORSTORE_DIR)
+    )
+
+    existing_collections = client.list_collections()
+
+    collection_names = [
+        collection.name
+        for collection in existing_collections
+    ]
+
+    if COLLECTION_NAME in collection_names:
+        client.delete_collection(name=COLLECTION_NAME)
+        print("Old vector collection deleted.")
+
+    collection = client.create_collection(
+        name=COLLECTION_NAME,
+        metadata={"hnsw:space": "cosine"}
+    )
+
+    print("Fresh vector collection created.")
+
+    return collection
+
+
 def store_embeddings(embedded_chunks):
     """
     Store text, embeddings and metadata in ChromaDB.
@@ -69,30 +100,53 @@ def store_embeddings(embedded_chunks):
 if __name__ == "__main__":
 
     print("=" * 60)
-    print("BRAIN TUMOR DETECTION — VECTOR DATABASE")
+    print("BRAIN TUMOR DETECTION - VECTOR DATABASE")
     print("=" * 60)
 
     print("\nLoading medical documents...")
 
     documents = load_pdf_documents()
 
+    print(f"\nTotal extracted pages: {len(documents)}")
+
     print("\nCreating text chunks...")
 
     chunks = split_documents(documents)
+
+    print(f"Total generated chunks: {len(chunks)}")
 
     print("\nGenerating embeddings...")
 
     embedded_chunks = generate_embeddings(chunks)
 
-    print("\nStoring embeddings in ChromaDB...")
+    print(f"Total generated embeddings: {len(embedded_chunks)}")
+
+    print("\nResetting old vector database...")
+
+    reset_vector_collection()
+
+    print("\nStoring new embeddings in ChromaDB...")
 
     collection = store_embeddings(embedded_chunks)
+
+    stored_count = collection.count()
 
     print("\nVECTOR DATABASE SUMMARY")
     print("-" * 60)
 
     print("Collection:", COLLECTION_NAME)
-    print("Stored chunks:", collection.count())
+    print("Extracted pages:", len(documents))
+    print("Generated chunks:", len(chunks))
+    print("Generated embeddings:", len(embedded_chunks))
+    print("Stored chunks:", stored_count)
     print("Database path:", VECTORSTORE_DIR)
+
+    if stored_count != len(embedded_chunks):
+        raise RuntimeError(
+            "Vector database verification failed: "
+            "stored chunk count does not match generated embeddings."
+        )
+
+    print("\nVector database rebuilt and verified successfully.")
 
     print("=" * 60)

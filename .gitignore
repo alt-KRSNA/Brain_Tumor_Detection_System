@@ -35,3 +35,7 @@ vectorstore/*
 
 # Keep the vectorstore directory in Git
 !vectorstore/.gitkeep
+
+#Sammple Images
+sample_images/
+knowledge_base/archive/*.pdf

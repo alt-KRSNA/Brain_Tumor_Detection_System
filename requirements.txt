@@ -19,3 +19,10 @@ pypdf
 langchain-text-splitters
 sentence-transformers
 chromadb
+matplotlib.pyplot
+streamlit
+fastapi
+Pillow
+torch
+torchvision
+python-multipart
