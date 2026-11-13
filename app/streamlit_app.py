@@ -1,103 +1,305 @@
+
 import streamlit as st
 import requests
 from PIL import Image
 import matplotlib.pyplot as plt
 
-# Page configuration
+# --------------------------------------------------
+# PAGE CONFIGURATION
+# --------------------------------------------------
+
 st.set_page_config(
-    page_title="Brain Tumor Classification",
+    page_title="Brain Tumor AI Assistant",
+    page_icon="🧠",
     layout="centered"
 )
 
-# FastAPI URL
-API_URL = "http://127.0.0.1:8000/api/predict"
+# --------------------------------------------------
+# API CONFIGURATION
+# --------------------------------------------------
 
-# Title
-st.title("Brain Tumor Classification")
+API_BASE_URL = "http://127.0.0.1:8000/api"
 
-st.write("Upload an MRI image for tumor classification.")
+PREDICT_API_URL = f"{API_BASE_URL}/predict"
+ASK_API_URL = f"{API_BASE_URL}/ask"
 
-# Upload image
-uploaded_file = st.file_uploader(
-    "Choose an Image",
-    type=["jpg", "jpeg", "png"]
+
+# --------------------------------------------------
+# APPLICATION TITLE
+# --------------------------------------------------
+
+st.title("Brain Tumor Detection System")
+
+st.write(
+    "An AI-powered system for brain MRI classification "
+    "and educational medical question answering."
 )
 
-if uploaded_file is not None:
+st.divider()
 
-    image = Image.open(uploaded_file)
 
-    st.image(
-        image,
-        caption="Uploaded Image",
-        use_container_width=True
+# --------------------------------------------------
+# APPLICATION TABS
+# --------------------------------------------------
+
+mri_tab, assistant_tab = st.tabs(
+    ["MRI Classification", "Medical AI Assistant"]
+)
+
+
+# ==================================================
+# TAB 1: MRI CLASSIFICATION
+# ==================================================
+
+with mri_tab:
+
+    st.header("Brain MRI Classification")
+
+    st.write(
+        "Upload a brain MRI image to classify its category."
     )
 
-    if st.button("Predict"):
+    uploaded_file = st.file_uploader(
+        "Choose an MRI Image",
+        type=["jpg", "jpeg", "png"],
+        key="mri_uploader"
+    )
 
-        with st.spinner("Predicting..."):
+    if uploaded_file is not None:
 
-            try:
+        image = Image.open(uploaded_file)
 
-                # Reset file pointer
-                uploaded_file.seek(0)
+        st.image(
+            image,
+            caption="Uploaded MRI Image",
+            use_container_width=True
+        )
 
-                # Read image bytes
-                image_bytes = uploaded_file.read()
+        if st.button("Predict", key="predict_button"):
 
-                # Debug
-                st.write(f"File Size : {len(image_bytes)} bytes")
+            with st.spinner("Analyzing MRI image..."):
 
-                files = {
-                    "file": (
-                        uploaded_file.name,
-                        image_bytes,
-                        uploaded_file.type
-                    )
-                }
+                try:
 
-                response = requests.post(
-                    API_URL,
-                    files=files
-                )
+                    uploaded_file.seek(0)
 
-                if response.status_code == 200:
+                    image_bytes = uploaded_file.read()
 
-                    result = response.json()
+                    files = {
+                        "file": (
+                            uploaded_file.name,
+                            image_bytes,
+                            uploaded_file.type
+                        )
+                    }
 
-                    st.subheader("Prediction")
-
-                    st.write(
-                        f"Prediction : {result['prediction']}"
-                    )
-
-                    st.write(
-                        f"Confidence : {result['confidence']} %"
+                    response = requests.post(
+                        PREDICT_API_URL,
+                        files=files,
+                        timeout=120
                     )
 
-                    st.subheader("Class Probabilities")
+                    if response.status_code == 200:
 
-                    probs = result["class_probabilities"]
+                        result = response.json()
 
-                    labels = list(probs.keys())
-                    values = list(probs.values())
+                        st.success("Prediction completed!")
 
-                    fig, ax = plt.subplots(figsize=(6,4))
+                        st.subheader("Prediction")
 
-                    ax.bar(labels, values)
+                        st.write(
+                            f"**Class:** {result['prediction']}"
+                        )
 
-                    ax.set_xlabel("Class")
-                    ax.set_ylabel("Probability (%)")
-                    ax.set_ylim(0,100)
+                        st.write(
+                            f"**Model Confidence:** "
+                            f"{result['confidence']}%"
+                        )
 
-                    st.pyplot(fig)
+                        st.subheader("Class Probabilities")
 
-                else:
+                        probs = result["class_probabilities"]
 
-                    st.error("Prediction Failed")
+                        labels = list(probs.keys())
+                        values = list(probs.values())
 
-                    st.code(response.text)
+                        fig, ax = plt.subplots(figsize=(7, 4))
 
-            except Exception as e:
+                        ax.bar(labels, values)
 
-                st.error(str(e))
+                        ax.set_xlabel("Tumor Class")
+                        ax.set_ylabel("Probability (%)")
+                        ax.set_ylim(0, 100)
+
+                        ax.set_title("Classification Results")
+
+                        plt.xticks(rotation=15)
+
+                        st.pyplot(fig)
+
+                        plt.close(fig)
+
+                        st.caption(
+                            "Educational and research use only. "
+                            "This model is not a medical diagnostic tool."
+                        )
+
+                    else:
+
+                        st.error("Prediction failed.")
+
+                        st.code(response.text)
+
+                except requests.exceptions.RequestException as error:
+
+                    st.error(
+                        f"Unable to connect to the API: {error}"
+                    )
+
+                except Exception as error:
+
+                    st.error(f"An error occurred: {error}")
+
+
+# ==================================================
+# TAB 2: MEDICAL AI ASSISTANT
+# ==================================================
+
+with assistant_tab:
+
+    st.header("Medical AI Assistant")
+
+    st.write(
+        "Ask educational questions about brain tumors, "
+        "MRI scans, symptoms, and related topics."
+    )
+
+    st.info(
+        "This assistant uses Retrieval-Augmented Generation (RAG) "
+        "to generate answers from the medical PDF knowledge base."
+    )
+
+    st.caption(
+        "Educational purposes only. It does not provide "
+        "medical diagnosis or treatment recommendations."
+    )
+
+    # Initialize chat history
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # Display previous conversation
+    for message in st.session_state.messages:
+
+        with st.chat_message(message["role"]):
+
+            st.markdown(message["content"])
+
+            # Display sources for assistant responses
+            if message["role"] == "assistant":
+
+                sources = message.get("sources", [])
+
+                if sources:
+
+                    with st.expander("View Medical Sources"):
+
+                        for source in sources:
+
+                            st.write(
+                                f"- {source['filename']} "
+                                f"(Page {source['page']})"
+                            )
+
+    # Chat input
+    question = st.chat_input(
+        "Ask a brain tumor-related question..."
+    )
+
+    if question:
+
+        # Display user question
+        st.session_state.messages.append(
+            {
+                "role": "user",
+                "content": question
+            }
+        )
+
+        with st.chat_message("user"):
+            st.markdown(question)
+
+        # Generate AI response
+        with st.chat_message("assistant"):
+
+            with st.spinner("Searching medical knowledge base..."):
+
+                try:
+
+                    response = requests.post(
+                        ASK_API_URL,
+                        json={"question": question},
+                        timeout=180
+                    )
+
+                    if response.status_code == 200:
+
+                        result = response.json()
+
+                        answer = result["answer"]
+                        sources = result.get("sources", [])
+
+                        st.markdown(answer)
+
+                        # Display source references
+                        if sources:
+
+                            with st.expander("View Medical Sources"):
+
+                                for source in sources:
+
+                                    st.write(
+                                        f"- {source['filename']} "
+                                        f"(Page {source['page']})"
+                                    )
+
+                        # Save assistant response
+                        st.session_state.messages.append(
+                            {
+                                "role": "assistant",
+                                "content": answer,
+                                "sources": sources
+                            }
+                        )
+
+                    else:
+
+                        error_message = (
+                            "Unable to generate an answer. "
+                            "Please try again."
+                        )
+
+                        st.error(error_message)
+                        st.code(response.text)
+
+                except requests.exceptions.RequestException as error:
+
+                    st.error(
+                        f"Unable to connect to the AI service: {error}"
+                    )
+
+                except Exception as error:
+
+                    st.error(f"An error occurred: {error}")
+
+
+# --------------------------------------------------
+# FOOTER
+# --------------------------------------------------
+
+st.divider()
+
+st.caption(
+    "Brain Tumor Detection System | "
+    "Deep Learning + Generative AI + RAG"
+)

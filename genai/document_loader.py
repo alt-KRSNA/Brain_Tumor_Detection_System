@@ -1,4 +1,5 @@
 
+import re
 from pathlib import Path
 
 from pypdf import PdfReader
@@ -11,9 +12,52 @@ DOCUMENTS_DIR = (
 )
 
 
+def clean_extracted_text(text: str) -> str:
+    """
+    Clean common PDF extraction noise while preserving
+    meaningful medical information.
+    """
+
+    if not text:
+        return ""
+
+    # Normalize whitespace
+    text = text.replace("\xa0", " ")
+    text = text.replace("\r", "\n")
+
+    # Remove standalone URLs
+    text = re.sub(
+        r"https?://\S+",
+        "",
+        text
+    )
+
+    # Remove standalone page indicators such as 1/30 or 2/5
+    text = re.sub(
+        r"^\s*\d+\s*/\s*\d+\s*$",
+        "",
+        text,
+        flags=re.MULTILINE
+    )
+
+    # Remove standalone numeric page numbers
+    text = re.sub(
+        r"^\s*\d+\s*$",
+        "",
+        text,
+        flags=re.MULTILINE
+    )
+
+    # Normalize excessive whitespace
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    return text.strip()
+
+
 def load_pdf_documents():
     """
-    Load PDF files and extract text page by page.
+    Load PDF files and extract cleaned text page by page.
 
     Returns:
         A list of dictionaries containing:
@@ -44,16 +88,19 @@ def load_pdf_documents():
             reader = PdfReader(str(pdf_path))
 
             extracted_pages = 0
+            skipped_pages = 0
 
             for page_number, page in enumerate(reader.pages, start=1):
 
-                text = page.extract_text() or ""
-                text = text.strip()
+                raw_text = page.extract_text() or ""
+
+                text = clean_extracted_text(raw_text)
 
                 if not text:
                     print(
-                        f"  Warning: No text on page {page_number}"
+                        f"  Warning: No useful text on page {page_number}"
                     )
+                    skipped_pages += 1
                     continue
 
                 documents.append({
@@ -67,8 +114,13 @@ def load_pdf_documents():
                 extracted_pages += 1
 
             print(
-                f"  Extracted {extracted_pages} pages"
+                f"  Extracted pages: {extracted_pages}"
             )
+
+            if skipped_pages:
+                print(
+                    f"  Skipped pages: {skipped_pages}"
+                )
 
         except Exception as error:
             print(
@@ -81,7 +133,7 @@ def load_pdf_documents():
 if __name__ == "__main__":
 
     print("=" * 60)
-    print("BRAIN TUMOR DETECTION — PDF DOCUMENT LOADER")
+    print("BRAIN TUMOR DETECTION - PDF DOCUMENT LOADER")
     print("=" * 60)
 
     docs = load_pdf_documents()
@@ -93,8 +145,9 @@ if __name__ == "__main__":
     print(f"Total extracted pages: {len(docs)}")
 
     if docs:
-        print("\nSample extracted content:")
+        print("\nSample cleaned content:")
         print("-" * 60)
+
         print(docs[0]["text"][:1000])
 
         print("\nSource:", docs[0]["metadata"]["source"])

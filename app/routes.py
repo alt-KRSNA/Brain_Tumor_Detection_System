@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pathlib import Path
 from PIL import Image
@@ -5,10 +6,15 @@ import tempfile
 import os
 
 from .services import BrainTumorClassifier
+from .schemas import QuestionRequest, QuestionResponse
+
+from genai.rag_pipeline import ask_medical_question
+
 
 router = APIRouter()
 
 classifier = BrainTumorClassifier()
+
 
 ALLOWED_EXTENSIONS = {
     "jpg",
@@ -61,7 +67,6 @@ async def predict(file: UploadFile = File(...)):
         ) as temp_file:
 
             temp_file.write(contents)
-
             temp_file.flush()
 
             temp_path = temp_file.name
@@ -70,7 +75,6 @@ async def predict(file: UploadFile = File(...)):
         try:
 
             image = Image.open(temp_path)
-
             image.verify()
 
         except Exception:
@@ -87,7 +91,6 @@ async def predict(file: UploadFile = File(...)):
     finally:
 
         if temp_path and os.path.exists(temp_path):
-
             os.remove(temp_path)
 
 
@@ -101,7 +104,38 @@ async def health():
 async def get_classes():
 
     return {
-
         "classes": classifier.get_class_names()
-
     }
+
+
+@router.post(
+    "/ask",
+    response_model=QuestionResponse,
+    tags=["medical assistant"]
+)
+async def ask_question(request: QuestionRequest):
+    """
+    Answer educational brain tumor questions using RAG.
+    """
+
+    try:
+
+        result = ask_medical_question(
+            question=request.question
+        )
+
+        return result
+
+    except ValueError as error:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
+
+    except Exception as error:
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to generate an answer. Please try again later."
+        )
