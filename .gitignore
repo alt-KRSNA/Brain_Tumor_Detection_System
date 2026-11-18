@@ -39,3 +39,8 @@ vectorstore/*
 #Sammple Images
 sample_images/
 knowledge_base/archive/*.pdf
+
+# Local RAG passage evaluation data
+test/passage_candidates.json
+test/passage_annotations.json
+test/passage_annotation_sheet.csv
