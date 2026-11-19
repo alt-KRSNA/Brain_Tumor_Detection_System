@@ -44,3 +44,7 @@ knowledge_base/archive/*.pdf
 test/passage_candidates.json
 test/passage_annotations.json
 test/passage_annotation_sheet.csv
+
+# Local passage evaluation outputs
+test/passage_evaluation_results.csv
+test/passage_evaluation_summary.json
