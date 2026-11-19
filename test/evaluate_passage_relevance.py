@@ -45,7 +45,9 @@ def load_annotations():
 def organize_annotations(annotations):
     """Organize annotations by configuration and question."""
 
-    organized = defaultdict(dict)
+    organized = defaultdict(
+        lambda: defaultdict(dict)
+    )
 
     for key, entry in annotations.items():
 
