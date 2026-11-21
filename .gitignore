@@ -51,3 +51,4 @@ test/passage_evaluation_summary.json
 
 # Local annotation backups
 test/passage_annotations_backup_*.json
+test/reports/
