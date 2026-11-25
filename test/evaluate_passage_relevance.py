@@ -1,94 +1,165 @@
+
+import csv
 import json
 import math
-import csv
 from pathlib import Path
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-ANNOTATION_FILE = PROJECT_ROOT / "test" / "passage_annotations.json"
+ANNOTATION_FILE = (
+    PROJECT_ROOT
+    / "test"
+    / "reports"
+    / "retrieval_baseline"
+    / "baseline_relevance_annotations.csv"
+)
 
 RESULTS_CSV = PROJECT_ROOT / "test" / "passage_evaluation_results.csv"
 SUMMARY_JSON = PROJECT_ROOT / "test" / "passage_evaluation_summary.json"
 
-CONFIGURATIONS = ["A", "B", "C"]
+CONFIGURATIONS = {
+    "A": "A - Baseline",
+    "B": "B - Medium",
+    "C": "C - Small",
+}
 
-QUESTION_IDS = [
-    "glioma",
-    "meningioma",
-    "pituitary",
-    "mri",
-    "symptoms",
-]
+QUESTION_IDS = ["Q01", "Q02", "Q03", "Q04", "Q05"]
 
 K_VALUES = [3, 5]
 
 
+# ============================================================
+# 1. LOAD ANNOTATIONS
+# ============================================================
+
 def load_annotations():
-    """Load and validate passage relevance annotations."""
+    """Load human-annotated passages from CSV."""
 
     if not ANNOTATION_FILE.exists():
         raise FileNotFoundError(
             f"Annotation file not found: {ANNOTATION_FILE}"
         )
 
-    with ANNOTATION_FILE.open("r", encoding="utf-8") as file:
-        annotations = json.load(file)
+    with ANNOTATION_FILE.open(
+        "r",
+        encoding="utf-8-sig",
+        newline=""
+    ) as file:
 
-    if not isinstance(annotations, dict):
-        raise ValueError("Annotations must be a JSON dictionary.")
+        reader = csv.DictReader(file)
+
+        required_columns = {
+            "configuration",
+            "question_id",
+            "rank",
+            "relevance_grade",
+            "review_note",
+            "review_confidence",
+        }
+
+        if not required_columns.issubset(set(reader.fieldnames or [])):
+            raise ValueError("CSV is missing required columns.")
+
+        annotations = list(reader)
+
+    if len(annotations) != 75:
+        raise ValueError(
+            f"Expected 75 annotations, found {len(annotations)}."
+        )
 
     return annotations
 
 
+# ============================================================
+# 2. ORGANIZE AND VALIDATE ANNOTATIONS
+# ============================================================
+
 def organize_annotations(annotations):
-    """Organize annotations by configuration and question."""
+    """Organize relevance grades by configuration, question and rank."""
 
-    organized = defaultdict(
-        lambda: defaultdict(dict)
-    )
+    organized = defaultdict(lambda: defaultdict(dict))
 
-    for key, entry in annotations.items():
+    reverse_config = {
+        label: code
+        for code, label in CONFIGURATIONS.items()
+    }
 
-        if not isinstance(entry, dict):
-            continue
+    seen = set()
 
-        config = entry.get("configuration")
-        question_id = entry.get("question_id")
-        rank = entry.get("rank")
-        grade = entry.get("relevance_grade")
+    for row in annotations:
 
-        if config not in CONFIGURATIONS:
-            continue
+        label = row["configuration"].strip()
+        question_id = row["question_id"].strip()
+
+        if label not in reverse_config:
+            raise ValueError(
+                f"Unknown configuration: {label}"
+            )
+
+        config = reverse_config[label]
 
         if question_id not in QUESTION_IDS:
-            continue
-
-        if grade not in [0, 1, 2]:
             raise ValueError(
-                f"Invalid relevance grade for {key}: {grade}"
+                f"Unknown question ID: {question_id}"
             )
 
-        if not isinstance(rank, int) or rank < 1:
+        try:
+            rank = int(row["rank"])
+            grade = int(row["relevance_grade"])
+        except (ValueError, TypeError):
             raise ValueError(
-                f"Invalid rank for annotation {key}: {rank}"
+                f"Invalid rank or relevance grade: {row}"
             )
+
+        if rank not in range(1, 6):
+            raise ValueError(f"Invalid rank: {rank}")
+
+        if grade not in (0, 1, 2):
+            raise ValueError(f"Invalid relevance grade: {grade}")
+
+        if not row["review_note"].strip():
+            raise ValueError(
+                f"Missing review note: {config}/{question_id}/{rank}"
+            )
+
+        if not row["review_confidence"].strip():
+            raise ValueError(
+                f"Missing review confidence: {config}/{question_id}/{rank}"
+            )
+
+        key = (config, question_id, rank)
+
+        if key in seen:
+            raise ValueError(
+                f"Duplicate annotation: {key}"
+            )
+
+        seen.add(key)
 
         organized[config][question_id][rank] = grade
+
+    if len(seen) != 75:
+        raise ValueError(
+            f"Expected 75 unique annotations, found {len(seen)}."
+        )
 
     return organized
 
 
 def validate_annotations(organized):
-    """Ensure all expected passages have been annotated."""
+    """Ensure all 75 expected passages have been annotated."""
 
     missing = []
 
     for config in CONFIGURATIONS:
+
         for question_id in QUESTION_IDS:
 
-            grades = organized.get(config, {}).get(question_id, {})
+            grades = organized.get(
+                config, {}
+            ).get(question_id, {})
 
             for rank in range(1, 6):
 
@@ -100,28 +171,32 @@ def validate_annotations(organized):
     if missing:
 
         print("\nANNOTATION VALIDATION FAILED")
-        print("=" * 70)
-        print(f"Missing annotations: {len(missing)}")
 
         for item in missing:
             print(" -", item)
 
         raise ValueError(
-            "\nComplete all 75 passage annotations before evaluation."
+            "Complete all 75 annotations before evaluation."
         )
 
     print("Annotation validation passed: all 75 passages are graded.")
 
 
+# ============================================================
+# 3. BASIC RETRIEVAL METRICS
+# ============================================================
+
 def precision_at_k(grades, k):
-    """Fraction of top-k passages that are relevant (grade >= 1)."""
+    """Fraction of top-K passages with relevance grade >= 1."""
 
     top_k = grades[:k]
 
     if not top_k:
         return 0.0
 
-    relevant = sum(grade >= 1 for grade in top_k)
+    relevant = sum(
+        grade >= 1 for grade in top_k
+    )
 
     return relevant / len(top_k)
 
@@ -130,11 +205,13 @@ def recall_at_k(grades, k):
     """
     Pool-relative Recall@K.
 
-    The denominator is the total number of relevant passages
-    among the five manually annotated retrieved passages.
+    Denominator: relevant passages among the five
+    manually annotated retrieved passages.
     """
 
-    total_relevant = sum(grade >= 1 for grade in grades)
+    total_relevant = sum(
+        grade >= 1 for grade in grades
+    )
 
     if total_relevant == 0:
         return 0.0
@@ -147,7 +224,7 @@ def recall_at_k(grades, k):
 
 
 def mean_reciprocal_rank(grades):
-    """Reciprocal rank of the first relevant passage."""
+    """First passage with relevance grade >= 1."""
 
     for rank, grade in enumerate(grades, start=1):
 
@@ -157,8 +234,42 @@ def mean_reciprocal_rank(grades):
     return 0.0
 
 
+# ============================================================
+# 4. STRICT RETRIEVAL METRICS
+# ============================================================
+
+def strict_mrr(grades):
+    """
+    Reciprocal rank of the first directly useful passage.
+
+    Only relevance grade 2 counts.
+    """
+
+    for rank, grade in enumerate(grades, start=1):
+
+        if grade == 2:
+            return 1.0 / rank
+
+    return 0.0
+
+
+def hit_rate_at_k(grades, k):
+    """
+    Returns 1 if at least one grade-2 passage
+    appears in the top K, otherwise 0.
+    """
+
+    return float(
+        any(grade == 2 for grade in grades[:k])
+    )
+
+
+# ============================================================
+# 5. RANKING QUALITY METRICS
+# ============================================================
+
 def dcg_at_k(grades, k):
-    """Calculate discounted cumulative gain."""
+    """Discounted Cumulative Gain."""
 
     score = 0.0
 
@@ -172,7 +283,7 @@ def dcg_at_k(grades, k):
 
 
 def ndcg_at_k(grades, k):
-    """Calculate normalized discounted cumulative gain."""
+    """Normalized Discounted Cumulative Gain."""
 
     actual_dcg = dcg_at_k(grades, k)
 
@@ -181,7 +292,9 @@ def ndcg_at_k(grades, k):
         reverse=True
     )
 
-    ideal_dcg = dcg_at_k(ideal_grades, k)
+    ideal_dcg = dcg_at_k(
+        ideal_grades, k
+    )
 
     if ideal_dcg == 0:
         return 0.0
@@ -190,7 +303,7 @@ def ndcg_at_k(grades, k):
 
 
 def average_relevance_at_k(grades, k):
-    """Mean relevance grade among top-k passages."""
+    """Average relevance grade among top-K passages."""
 
     top_k = grades[:k]
 
@@ -200,11 +313,16 @@ def average_relevance_at_k(grades, k):
     return sum(top_k) / len(top_k)
 
 
+# ============================================================
+# 6. QUESTION-LEVEL EVALUATION
+# ============================================================
+
 def evaluate_question(grades):
-    """Calculate retrieval metrics for a single question."""
+    """Calculate all retrieval metrics for one question."""
 
     metrics = {
-        "MRR": mean_reciprocal_rank(grades)
+        "MRR": mean_reciprocal_rank(grades),
+        "Strict_MRR": strict_mrr(grades),
     }
 
     for k in K_VALUES:
@@ -225,11 +343,19 @@ def evaluate_question(grades):
             average_relevance_at_k(grades, k)
         )
 
+        metrics[f"HitRate@{k}"] = hit_rate_at_k(
+            grades, k
+        )
+
     return metrics
 
 
+# ============================================================
+# 7. CONFIGURATION-LEVEL SUMMARY
+# ============================================================
+
 def calculate_configuration_summary(question_results):
-    """Calculate mean metrics across all questions."""
+    """Calculate mean metrics across all five questions."""
 
     metric_names = list(
         question_results[0]["metrics"].keys()
@@ -244,29 +370,34 @@ def calculate_configuration_summary(question_results):
             for result in question_results
         ]
 
-        summary[metric_name] = sum(values) / len(values)
+        summary[metric_name] = (
+            sum(values) / len(values)
+        )
 
     return summary
 
 
-def save_csv_results(results):
-    """Save question-level metrics to CSV."""
+# ============================================================
+# 8. SAVE DETAILED CSV RESULTS
+# ============================================================
 
-    if not results:
-        return
+def save_csv_results(results):
 
     fieldnames = [
         "configuration",
         "question_id",
         "MRR",
+        "Strict_MRR",
         "Precision@3",
         "Recall@3",
         "nDCG@3",
         "AvgRelevance@3",
+        "HitRate@3",
         "Precision@5",
         "Recall@5",
         "nDCG@5",
         "AvgRelevance@5",
+        "HitRate@5",
     ]
 
     with RESULTS_CSV.open(
@@ -293,11 +424,16 @@ def save_csv_results(results):
 
             writer.writerow(row)
 
-    print(f"\nDetailed results saved: {RESULTS_CSV}")
+    print(
+        f"\nDetailed results saved: {RESULTS_CSV}"
+    )
 
+
+# ============================================================
+# 9. SAVE CONFIGURATION SUMMARY
+# ============================================================
 
 def save_summary(summary):
-    """Save configuration-level averages to JSON."""
 
     with SUMMARY_JSON.open(
         "w",
@@ -310,20 +446,25 @@ def save_summary(summary):
             indent=4
         )
 
-    print(f"Summary saved: {SUMMARY_JSON}")
+    print(
+        f"Summary saved: {SUMMARY_JSON}"
+    )
 
+
+# ============================================================
+# 10. PRINT RESULTS
+# ============================================================
 
 def print_results(results, summary):
-    """Print question-level and configuration-level metrics."""
 
-    print("\n" + "=" * 90)
+    print("\n" + "=" * 100)
     print("PASSAGE-LEVEL RETRIEVAL EVALUATION")
-    print("=" * 90)
+    print("=" * 100)
 
-    for config in CONFIGURATIONS:
+    for config, label in CONFIGURATIONS.items():
 
-        print(f"\nCONFIGURATION {config}")
-        print("-" * 90)
+        print(f"\n{label.upper()}")
+        print("-" * 100)
 
         config_results = [
             result
@@ -335,28 +476,44 @@ def print_results(results, summary):
 
             metrics = result["metrics"]
 
-            print(f"\nQuestion: {result['question_id']}")
+            print(
+                f"\nQuestion: {result['question_id']}"
+            )
 
             print(
                 f"MRR: {metrics['MRR']:.4f} | "
+                f"Strict MRR: {metrics['Strict_MRR']:.4f}"
+            )
+
+            print(
                 f"P@3: {metrics['Precision@3']:.4f} | "
                 f"R@3: {metrics['Recall@3']:.4f} | "
-                f"nDCG@3: {metrics['nDCG@3']:.4f}"
+                f"nDCG@3: {metrics['nDCG@3']:.4f} | "
+                f"Hit@3: {metrics['HitRate@3']:.4f}"
             )
 
             print(
                 f"P@5: {metrics['Precision@5']:.4f} | "
                 f"R@5: {metrics['Recall@5']:.4f} | "
                 f"nDCG@5: {metrics['nDCG@5']:.4f} | "
+                f"Hit@5: {metrics['HitRate@5']:.4f} | "
                 f"AvgRel@5: {metrics['AvgRelevance@5']:.4f}"
             )
 
-        print(f"\nCONFIGURATION {config} AVERAGE")
+        print(
+            f"\n{label.upper()} AVERAGE"
+        )
 
         for metric, value in summary[config].items():
 
-            print(f"{metric:<20}: {value:.4f}")
+            print(
+                f"{metric:<20}: {value:.4f}"
+            )
 
+
+# ============================================================
+# 11. MAIN
+# ============================================================
 
 def main():
 
@@ -420,6 +577,22 @@ def main():
     save_summary(
         configuration_summaries
     )
+
+    # Relevance-grade distribution
+    grade_distribution = Counter(
+        int(row["relevance_grade"])
+        for row in annotations
+    )
+
+    print("\n" + "=" * 70)
+    print("ANNOTATION DISTRIBUTION")
+    print("=" * 70)
+
+    for grade in [0, 1, 2]:
+
+        print(
+            f"Grade {grade}: {grade_distribution[grade]}"
+        )
 
     print("\n" + "=" * 70)
     print("EVALUATION COMPLETED SUCCESSFULLY")
